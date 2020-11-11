@@ -1,0 +1,122 @@
+@Override
+    public List<Map<String,Object>> queryPageBucket(String project) {
+
+        // bucket map
+        Map<String,Object> bucket = new HashMap<>();
+
+        // get /admin/bucket
+        try {
+            String adminAK = "CDG3NDZH6DAVOVVNNYGZ";
+            String adminSK = "bJzLeXrxT64kuxrWYTfVNhKhiPNADTW25oC7yLqU";
+            String date = getCurrentTime();
+            String stringToSign = "GET\n\n\n" + date +"\n"+"/admin/bucket";
+            String requestUrl = "http://127.0.0.1:7777/admin/bucket";
+            String liantiaoUrl = "http://10.18.48.20:7480/admin/bucket";
+            String parm = "?format=json&uid="+project+"&stats=true";
+
+            RequestEntity entity = makeRequest(HttpMethod.GET, requestUrl, parm, stringToSign, adminAK, adminSK, date);
+            ResponseEntity<String> exchange = restTemplate.exchange(entity, String.class);
+            JSONArray array = JSON.parseArray(exchange.getBody());
+
+            List<String> list = new ArrayList<>();
+            for (Object o : array) {
+                JSONObject jsonObject = JSONArray.parseObject(String.valueOf(o));
+
+                String bucketName = jsonObject.getString("bucket");
+                //获得桶名称
+                list.add(bucketName);
+
+                JSONObject bucket_quota = jsonObject.getJSONObject("bucket_quota");
+                String max_objects = bucket_quota.getString("max_objects");
+                String max_size_kb = bucket_quota.getString("max_size_kb");
+
+                Map<String,Object> info = new HashMap<>();
+                info.put("max_objects",max_objects);
+                info.put("max_size_kb",max_size_kb);
+                bucket.put(bucketName, info);
+            }
+            System.out.println("list = " + list);
+
+
+
+
+        // get /
+
+            // read user aksk from database
+            UserEntityForMysql user = bucketDao.get(Long.valueOf(project));
+            String AK = user.getAccessKey();
+            String SK = user.getSecretKey();
+
+            String stringToSign1 = "GET\n\n\n" + date +"\n"+"/";
+            String requestUrl1 = "http://127.0.0.1:7777/";
+            String liantiaoUrl1 = "http://10.18.48.20:7480/";
+            String param = "?format=json";
+
+            RequestEntity entity1 = makeRequest(HttpMethod.GET, requestUrl1, param, stringToSign1, AK, SK, date);
+            ResponseEntity<String> exchange1 = restTemplate.exchange(entity1, String.class);
+            JSONArray array1 = JSON.parseArray(exchange1.getBody());
+            JSONArray innerMap = JSON.parseArray(array1.get(1).toString());
+
+            for (Object o : innerMap) {
+                JSONObject jsonObject = JSON.parseObject(String.valueOf(o));
+                String bucketName = jsonObject.getString("Name");
+                String creationDate = jsonObject.getString("CreationDate");
+                // update bucket map
+
+                Map<String, Object> tmp = (Map<String, Object>)bucket.get(bucketName);
+                tmp.put("CreationDate", creationDate);
+            }
+
+
+        //查询用户权限
+        Map<String,Object> map = new HashMap<>();
+        for (int i = 0; i < list.size(); i++) {
+            String stringToSign2 = "GET\n\n\n" + date +"\n"+"/"+list.get(i)+"?acl";
+            String aclUrl = "http://127.0.0.1:7777/"+list.get(i);
+            String aclliantiaoUrl = "http://10.18.48.20:7480/"+list.get(i);
+            String param1 = "?acl";
+
+            RequestEntity aclEntity = makeRequest(HttpMethod.GET, aclUrl, param1, stringToSign2, AK, SK, date);
+            ResponseEntity<String> aclExchange = restTemplate.exchange(aclEntity, String.class);
+            String body = aclExchange.getBody();
+
+            Document doc  = DocumentHelper.parseText(body);
+
+            Element rootElement = doc.getRootElement();//指向根节点
+            Iterator iterator = rootElement.elementIterator();
+
+            while (iterator.hasNext()) {
+                Element element = (Element) iterator.next();//一个Item节点
+                if ("AccessControlList".equals(element.getName())){
+                    Iterator grant = element.elementIterator("Grant");
+                    Element grantElement = (Element) grant.next();//grant节点
+                    Iterator permission = grantElement.elementIterator("Permission");
+                    Element permissionElement = (Element)permission.next();
+                    //获取到权限
+                    String permissionText = permissionElement.getTextTrim();
+
+                    map.put("Permission",permissionText);
+
+                }
+            }
+        }
+
+        // convert format: bucketmap -> bucketList
+        List<Map<String, Object>> bucketList = new ArrayList<>();
+        for (String s : bucket.keySet()) {
+            Map<String,Object> singleBucket = new HashMap<>();
+            singleBucket.put("bucket",s);
+            Map<String,String> tmp = (Map<String, String>) bucket.get(s);
+            singleBucket.put("max_objects",tmp.get("max_objects"));
+            singleBucket.put("max_size_kb",tmp.get("max_size_kb"));
+            singleBucket.put("CreationDate",tmp.get("CreationDate"));
+            singleBucket.put("Permission",map.get("Permission"));
+            bucketList.add(singleBucket);
+        }
+
+        return bucketList;
+        } catch (Exception e) {
+            //TODO: handle exception
+        }
+        return null;
+    }
